@@ -1,0 +1,1 @@
+      platforms: automation.publishTargets.map((t) => ({

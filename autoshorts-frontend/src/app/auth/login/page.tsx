@@ -1,0 +1,113 @@
+// src/app/auth/login/page.tsx
+'use client'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { Zap, Eye, EyeOff } from 'lucide-react'
+import { useAuthStore } from '@/store/auth'
+import { authApi } from '@/lib/api'
+
+export default function LoginPage() {
+  const router = useRouter()
+  const { setAuth } = useAuthStore()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPw, setShowPw] = useState(false)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      const data = await authApi.login(email, password)
+      setAuth(data.token, data.user)
+      router.push('/dashboard')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setError(msg ?? 'Login failed. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-surface-1 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        {/* Logo */}
+        <div className="flex items-center gap-2.5 mb-8 justify-center">
+          <div className="w-8 h-8 rounded-xl bg-violet-600 flex items-center justify-center">
+            <Zap size={16} className="text-white" />
+          </div>
+          <span className="text-lg font-semibold text-ink-1">AutoShorts</span>
+        </div>
+
+        <div className="card p-6">
+          <h1 className="text-base font-semibold text-ink-1 mb-1">Sign in</h1>
+          <p className="text-sm text-ink-3 mb-5">Continue to your agent dashboard</p>
+
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-ink-2 mb-1.5">Email</label>
+              <input
+                type="email"
+                className="field"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink-2 mb-1.5">Password</label>
+              <div className="relative">
+                <input
+                  type={showPw ? 'text' : 'password'}
+                  className="field pr-9"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+                <button
+                  type="button"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-4 hover:text-ink-2"
+                  onClick={() => setShowPw(!showPw)}
+                >
+                  {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn btn-primary w-full"
+            >
+              {loading ? <span className="spinner" /> : 'Sign in'}
+            </button>
+          </form>
+
+          <div className="mt-5 pt-4 border-t border-surface-2 text-center text-sm text-ink-3">
+            No account?{' '}
+            <Link href="/auth/register" className="text-violet-600 hover:underline font-medium">
+              Create one
+            </Link>
+          </div>
+
+          {/* Demo hint */}
+          <div className="mt-3 p-2.5 bg-surface-1 rounded text-xs text-ink-4 text-center">
+            Demo: <span className="font-mono">demo@autoshorts.ai</span> / <span className="font-mono">password123</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

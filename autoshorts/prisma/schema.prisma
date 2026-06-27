@@ -1,0 +1,193 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  automations  Automation[]
+  oauthTokens  OAuthToken[]
+
+  @@map("users")
+}
+
+model Automation {
+  id              String         @id @default(cuid())
+  userId          String
+  name            String
+  status          AutomationStatus @default(RUNNING)
+  sourceType      SourceType
+  sourceUrl       String
+  channelName     String?
+  clipDuration    Int            // seconds: 10, 15, 30, 45, 60
+  pollingInterval Int            @default(5) // minutes
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  lastCheckedAt   DateTime?
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videos          SourceVideo[]
+  publishTargets  PublishTarget[]
+
+  @@map("automations")
+}
+
+model OAuthToken {
+  id            String    @id @default(cuid())
+  userId        String
+  platform      Platform
+  accessToken   String    // encrypted at rest
+  refreshToken  String?   // encrypted at rest
+  expiresAt     DateTime?
+  scope         String?
+  platformUserId   String?
+  platformUsername String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, platform])
+  @@map("oauth_tokens")
+}
+
+model PublishTarget {
+  id           String     @id @default(cuid())
+  automationId String
+  platform     Platform
+  enabled      Boolean    @default(true)
+  privacy      Privacy    @default(PUBLIC)
+  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@unique([automationId, platform])
+  @@map("publish_targets")
+}
+
+model SourceVideo {
+  id              String        @id @default(cuid())
+  automationId    String
+  externalId      String        // YouTube video ID, etc.
+  title           String
+  description     String?       @db.Text
+  thumbnailUrl    String?
+  videoUrl        String?
+  duration        Int?          // seconds
+  uploadedAt      DateTime
+  processingStatus ProcessingStatus @default(PENDING)
+  failureCount    Int           @default(0)
+  failureReason   String?
+  processedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  automation      Automation    @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  clip            GeneratedClip?
+
+  @@unique([automationId, externalId])
+  @@map("source_videos")
+}
+
+model GeneratedClip {
+  id           String        @id @default(cuid())
+  sourceVideoId String       @unique
+  duration     Int           // seconds
+  startTime    Float         // segment start in source video
+  endTime      Float         // segment end
+  outputPath   String?       // local or S3 path
+  outputUrl    String?       // public URL if uploaded to storage
+  fileSize     Int?          // bytes
+  aiScore      Float?        // engagement score 0-1
+  aiSegmentReason String?    // why AI picked this segment
+  title        String?       // AI-generated
+  caption      String?       @db.Text // AI-generated
+  hashtags     String[]      // AI-generated
+  createdAt    DateTime      @default(now())
+  sourceVideo  SourceVideo   @relation(fields: [sourceVideoId], references: [id], onDelete: Cascade)
+  publications Publication[]
+
+  @@map("generated_clips")
+}
+
+model Publication {
+  id             String            @id @default(cuid())
+  clipId         String
+  platform       Platform
+  status         PublicationStatus @default(PENDING)
+  platformVideoId String?          // ID returned by platform after upload
+  platformUrl    String?           // public URL on platform
+  failureCount   Int               @default(0)
+  failureReason  String?
+  publishedAt    DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  clip           GeneratedClip     @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@map("publications")
+}
+
+model SystemLog {
+  id           String   @id @default(cuid())
+  automationId String?
+  level        LogLevel
+  category     String   // detect, clip, publish, retry, etc.
+  message      String   @db.Text
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@map("system_logs")
+}
+
+enum AutomationStatus {
+  RUNNING
+  PAUSED
+  ERROR
+}
+
+enum SourceType {
+  YOUTUBE
+  VIMEO
+  RSS
+  WEBSITE
+  CUSTOM
+}
+
+enum Platform {
+  YOUTUBE
+  INSTAGRAM
+  FACEBOOK
+}
+
+enum Privacy {
+  PUBLIC
+  UNLISTED
+  PRIVATE
+}
+
+enum ProcessingStatus {
+  PENDING
+  QUEUED
+  PROCESSING
+  DONE
+  FAILED
+  SKIPPED
+}
+
+enum PublicationStatus {
+  PENDING
+  UPLOADING
+  PUBLISHED
+  FAILED
+}
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+  DEBUG
+}
