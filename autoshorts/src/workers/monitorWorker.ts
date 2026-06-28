@@ -8,6 +8,10 @@ import { logger, dbLog } from '../services/logger'
 import type { MonitorJobData, YouTubeVideoItem } from '../types'
 import { parseISO8601Duration } from '../utils/duration'
 
+function sanitizeJobId(jobId: string): string {
+  return jobId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 255)
+}
+
 const worker = new Worker<MonitorJobData>(
   QUEUE_MONITOR,
   async (job) => {
@@ -96,25 +100,42 @@ const worker = new Worker<MonitorJobData>(
         },
       })
 
-      const jobName = `clip-${automationId}-${externalId}`
-      const jobId = jobName
+      const jobName = 'clip'
+      const jobId = sanitizeJobId(`clip-${automationId}-${externalId}`)
 
       // Enqueue clip generation job
-      await clipQueue.add(
-        jobName,
-        {
+      try {
+        await clipQueue.add(
+          jobName,
+          {
+            automationId,
+            userId: automation.userId,
+            sourceVideoId: sourceVideo.id,
+            videoUrl: sourceVideo.videoUrl!,
+            duration: automation.clipDuration,
+            sourceTitle: title,
+            sourceDescription: video.snippet.description ?? '',
+          },
+          {
+            jobId, // deduplicate
+          }
+        )
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        logger.error('[monitor] Failed to enqueue clip job', {
           automationId,
-          userId: automation.userId,
+          externalId,
           sourceVideoId: sourceVideo.id,
-          videoUrl: sourceVideo.videoUrl!,
-          duration: automation.clipDuration,
-          sourceTitle: title,
-          sourceDescription: video.snippet.description ?? '',
-        },
-        {
-          jobId, // deduplicate
-        }
-      )
+          jobId,
+          err: msg,
+        })
+        await dbLog('ERROR', 'detect', `Failed to enqueue clip job: ${msg}`, automationId, {
+          externalId,
+          videoId: sourceVideo.id,
+          jobId,
+        })
+        throw err
+      }
 
       await prisma.sourceVideo.update({
         where: { id: sourceVideo.id },

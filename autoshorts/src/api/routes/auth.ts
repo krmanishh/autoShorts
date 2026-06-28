@@ -119,6 +119,11 @@ authRouter.get('/youtube/callback', async (req: Request, res: Response) => {
 })
 
 // ── GET /api/auth/instagram ──────────────────────────────
+// Uses "Instagram API with Instagram Login" — a separate login flow from
+// Facebook Login, with its own app ID/secret and its own authorize/token
+// endpoints (instagram.com / graph.instagram.com, NOT graph.facebook.com).
+// This is required for the current instagram_business_* permissions —
+// they don't exist on the regular Facebook Login dialog.
 authRouter.get('/instagram', requireAuth, async (req: Request, res: Response) => {
   const userId = (req as Request & { userId: string }).userId
   const state = await createOAuthState(userId)
@@ -126,11 +131,11 @@ authRouter.get('/instagram', requireAuth, async (req: Request, res: Response) =>
   const params = new URLSearchParams({
     client_id: process.env.INSTAGRAM_APP_ID!,
     redirect_uri: process.env.INSTAGRAM_REDIRECT_URI!,
-    scope: 'instagram_basic,instagram_content_publish,pages_read_engagement',
+    scope: 'instagram_business_basic,instagram_business_content_publish',
     response_type: 'code',
     state,
   })
-  res.json({ url: `https://www.facebook.com/v20.0/dialog/oauth?${params}` })
+  res.json({ url: `https://www.instagram.com/oauth/authorize?${params}` })
 })
 
 // ── GET /api/auth/instagram/callback ─────────────────────
@@ -182,7 +187,7 @@ authRouter.get('/facebook', requireAuth, async (req: Request, res: Response) => 
   const params = new URLSearchParams({
     client_id: process.env.FACEBOOK_APP_ID!,
     redirect_uri: process.env.FACEBOOK_REDIRECT_URI!,
-    scope: 'pages_show_list,pages_read_engagement,pages_manage_posts,publish_video',
+    scope: 'pages_show_list,pages_read_engagement,pages_manage_posts',
     response_type: 'code',
     state,
   })

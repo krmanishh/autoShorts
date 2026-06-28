@@ -4,7 +4,10 @@ import { decrypt } from './encryption'
 import { prisma } from '../db/client'
 import { logger } from './logger'
 
-const FB_BASE = 'https://graph.facebook.com/v20.0'
+// "Instagram API with Instagram Login" uses its own hosts, separate from
+// the regular Facebook Graph API. The IG account authenticates directly —
+// no Facebook Page lookup needed.
+const IG_GRAPH_BASE = 'https://graph.instagram.com/v21.0'
 
 // Note: the OAuth authorization URL is built in api/routes/auth.ts using a
 // server-side state nonce (see services/oauthState.ts). There is intentionally
@@ -12,50 +15,42 @@ const FB_BASE = 'https://graph.facebook.com/v20.0'
 
 // ── Exchange code for tokens ───────────────────────────────
 export async function exchangeInstagramCode(code: string) {
-  const res = await axios.get(`${FB_BASE}/oauth/access_token`, {
-    params: {
-      client_id: process.env.INSTAGRAM_APP_ID,
-      client_secret: process.env.INSTAGRAM_APP_SECRET,
-      redirect_uri: process.env.INSTAGRAM_REDIRECT_URI,
+  // Step 1: exchange the authorization code for a short-lived token.
+  // This endpoint expects form-encoded POST data, not query params.
+  const shortLivedRes = await axios.post(
+    'https://api.instagram.com/oauth/access_token',
+    new URLSearchParams({
+      client_id: process.env.INSTAGRAM_APP_ID!,
+      client_secret: process.env.INSTAGRAM_APP_SECRET!,
+      grant_type: 'authorization_code',
+      redirect_uri: process.env.INSTAGRAM_REDIRECT_URI!,
       code,
-    },
-  })
+    })
+  )
+  const { access_token: shortLivedToken, user_id: igAccountId } = shortLivedRes.data
 
-  // Get long-lived token
-  const llRes = await axios.get(`${FB_BASE}/oauth/access_token`, {
+  // Step 2: exchange the short-lived token (~1hr) for a long-lived one (~60 days)
+  const longLivedRes = await axios.get('https://graph.instagram.com/access_token', {
     params: {
-      grant_type: 'fb_exchange_token',
-      client_id: process.env.INSTAGRAM_APP_ID,
+      grant_type: 'ig_exchange_token',
       client_secret: process.env.INSTAGRAM_APP_SECRET,
-      fb_exchange_token: res.data.access_token,
+      access_token: shortLivedToken,
     },
   })
 
-  // Get Instagram Business Account ID
-  const meRes = await axios.get(`${FB_BASE}/me/accounts`, {
-    params: { access_token: llRes.data.access_token },
-  })
-  const page = meRes.data.data?.[0]
-  if (!page) throw new Error('No Facebook Page found for this account')
+  const accessToken: string = longLivedRes.data.access_token
+  const expiresIn: number = longLivedRes.data.expires_in // seconds
 
-  const igRes = await axios.get(`${FB_BASE}/${page.id}`, {
-    params: {
-      fields: 'instagram_business_account',
-      access_token: page.access_token,
-    },
-  })
-  const igAccountId = igRes.data.instagram_business_account?.id
-  if (!igAccountId) throw new Error('No Instagram Business Account linked to this Page')
-
-  const igMeRes = await axios.get(`${FB_BASE}/${igAccountId}`, {
-    params: { fields: 'username', access_token: page.access_token },
+  // Step 3: fetch the username for display purposes
+  const meRes = await axios.get(`${IG_GRAPH_BASE}/${igAccountId}`, {
+    params: { fields: 'username', access_token: accessToken },
   })
 
   return {
-    accessToken: page.access_token,
-    igAccountId,
-    username: igMeRes.data.username ?? '',
-    expiresIn: llRes.data.expires_in,
+    accessToken,
+    igAccountId: String(igAccountId),
+    username: meRes.data.username ?? '',
+    expiresIn,
   }
 }
 
@@ -83,7 +78,7 @@ export async function uploadInstagramReel(
   // Step 1: Create media container
   logger.debug('Instagram: creating media container')
   const containerRes = await axios.post(
-    `${FB_BASE}/${igAccountId}/media`,
+    `${IG_GRAPH_BASE}/${igAccountId}/media`,
     null,
     {
       params: {
@@ -103,7 +98,7 @@ export async function uploadInstagramReel(
   // Step 3: Publish
   logger.debug('Instagram: publishing reel', { containerId })
   const publishRes = await axios.post(
-    `${FB_BASE}/${igAccountId}/media_publish`,
+    `${IG_GRAPH_BASE}/${igAccountId}/media_publish`,
     null,
     {
       params: {
@@ -128,7 +123,7 @@ async function pollContainerStatus(
 ): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < maxWaitMs) {
-    const res = await axios.get(`${FB_BASE}/${containerId}`, {
+    const res = await axios.get(`${IG_GRAPH_BASE}/${containerId}`, {
       params: { fields: 'status_code,status', access_token: accessToken },
     })
     const { status_code } = res.data

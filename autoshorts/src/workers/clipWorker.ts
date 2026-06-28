@@ -57,12 +57,18 @@ async function enqueuePublish(params: {
   const jobName = `publish-${sourceVideoId}`
   const jobId = jobName
 
-  logger.info('[clip] Enqueueing publish job', {
+  // Delay publish by 24 hours so engagement data can be observed before
+  // deciding on final publication behavior.
+  const publishDelayMs = 24 * 60 * 60 * 1000 // 24 hours
+  const scheduledAt = new Date(Date.now() + publishDelayMs)
+
+  logger.info('[clip] Enqueueing publish job (scheduled)', {
     automationId,
     sourceVideoId,
     clipId,
     jobName,
     jobId,
+    scheduledAt: scheduledAt.toISOString(),
     targetCount: automation.publishTargets.length,
   })
 
@@ -82,7 +88,7 @@ async function enqueuePublish(params: {
           privacy: t.privacy.toUpperCase() as 'PUBLIC' | 'UNLISTED' | 'PRIVATE',
         })),
       },
-      { jobId }
+      { jobId, delay: publishDelayMs }
     )
   } catch (err: unknown) {
     const msg = toMessage(err)
@@ -97,12 +103,13 @@ async function enqueuePublish(params: {
     throw err
   }
 
-  logger.info('[clip] Publish job enqueued', {
+  logger.info('[clip] Publish job enqueued (scheduled)', {
     automationId,
     sourceVideoId,
     clipId,
     jobName,
     jobId,
+    scheduledAt: scheduledAt.toISOString(),
   })
 
   return true
@@ -196,6 +203,14 @@ const worker = new Worker<ClipJobData>(
         { reason: segment.reason }
       )
 
+      // Ensure the generated clip title is not identical to the source video's
+      // title. If the AI-chosen title exactly matches the source title, append
+      // a short suffix so the clip has a distinct heading.
+      const rawSegmentTitle = (segment.title ?? '').trim()
+      const clipTitle = rawSegmentTitle && rawSegmentTitle !== sourceTitle.trim()
+        ? rawSegmentTitle
+        : (rawSegmentTitle ? `${rawSegmentTitle} (Clip)` : `${sourceTitle} (Clip)`)
+
       // ── Step 3: Generate vertical clip ────────────────
       await dbLog('INFO', 'clip', 'Encoding 9:16 clip with FFmpeg...', automationId)
       clipPath = await generateClip({
@@ -263,7 +278,7 @@ const worker = new Worker<ClipJobData>(
       await dbLog(
         'INFO',
         'clip',
-        `Clip generated: "${segment.title}"`,
+        `Clip generated: "${clipTitle}"`,
         automationId,
         { clipId: clip.id, outputUrl }
       )
@@ -275,7 +290,7 @@ const worker = new Worker<ClipJobData>(
         sourceVideoId,
         clipId: clip.id,
         outputUrl,
-        title: segment.title,
+        title: clipTitle,
         caption: segment.caption,
         hashtags: segment.hashtags,
       })
